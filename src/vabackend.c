@@ -104,7 +104,7 @@ void logger(const char *filename, const char *function, int line, const char *ms
     va_end(argList);
 
     fprintf(LOG_OUTPUT, "[%d-%d] %s:%4d %24s %s\n", getpid(), gettid(), filename, line, function, formattedMessage);
-    //fflush(LOG_OUTPUT);
+    fflush(LOG_OUTPUT);
 }
 
 void checkCudaErrors(CUresult err, const char *file, const char *function, const int line)
@@ -281,6 +281,7 @@ static VAStatus nvQueryConfigProfiles(
     cu->cuCtxPushCurrent(drv->cudaContext);
 
     int profiles = 0;
+    profile_list[profiles++] = VAProfileNone;
     if (doesGPUSupportCodec(cudaVideoCodec_MPEG2, 8, cudaVideoChromaFormat_420, NULL, NULL)) {
         profile_list[profiles++] = VAProfileMPEG2Simple;
         profile_list[profiles++] = VAProfileMPEG2Main;
@@ -360,7 +361,7 @@ static VAStatus nvQueryConfigProfiles(
 
     //now filter out the codecs we don't support
     for (int i = 0; i < profiles; i++) {
-        if (vaToCuCodec(profile_list[i]) == cudaVideoCodec_NONE) {
+        if (profile_list[i] != VAProfileNone && vaToCuCodec(profile_list[i]) == cudaVideoCodec_NONE) {
             //LOG("Removing profile: %d", profile_list[i])
             for (int x = i; x < profiles-1; x++) {
                 profile_list[x] = profile_list[x+1];
@@ -384,8 +385,12 @@ static VAStatus nvQueryConfigEntrypoints(
         int *num_entrypoints			/* out */
     )
 {
-    entrypoint_list[0] = VAEntrypointVLD;
-    *num_entrypoints = 1;
+    int i = 0;
+    if (profile != VAProfileNone) {
+        entrypoint_list[i++] = VAEntrypointVLD;
+    }
+    entrypoint_list[i++] = VAEntrypointVideoProc;
+    *num_entrypoints = i;
 
     return VA_STATUS_SUCCESS;
 }
@@ -398,7 +403,8 @@ static VAStatus nvGetConfigAttributes(
         int num_attribs
     )
 {
-    if (vaToCuCodec(profile) == cudaVideoCodec_NONE) {
+    if (entrypoint != VAEntrypointVideoProc &&
+        vaToCuCodec(profile) == cudaVideoCodec_NONE) {
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
 
@@ -439,16 +445,17 @@ static VAStatus nvCreateConfig(
     )
 {
     NVDriver *drv = (NVDriver*) ctx->pDriverData;
-    LOG("got profile: %d with %d attributes", profile, num_attribs);
+    LOG("got profile: %d with entrypoint %d with %d attributes", profile, entrypoint, num_attribs);
     cudaVideoCodec cudaCodec = vaToCuCodec(profile);
 
-    if (cudaCodec == cudaVideoCodec_NONE) {
+    if (entrypoint != VAEntrypointVideoProc && cudaCodec == cudaVideoCodec_NONE) {
         //we don't support this yet
         LOG("Profile not supported: %d", profile);
         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
     }
 
-    if (entrypoint != VAEntrypointVLD) {
+    if (entrypoint != VAEntrypointVideoProc &&
+            entrypoint != VAEntrypointVLD) {
         LOG("Entrypoint not supported: %d", entrypoint);
         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
     }
@@ -618,6 +625,23 @@ static VAStatus nvCreateContext(
     NVConfig *cfg = (NVConfig*) getObjectPtr(drv, config_id);
 
     LOG("with %d render targets, %d surfaces, at %dx%d", num_render_targets, drv->surfaceCount, picture_width, picture_height);
+
+    if(cfg->entrypoint == VAEntrypointVideoProc) {
+        LOG("here in nvCreateContext");
+        Object contextObj = allocateObject(drv, OBJECT_TYPE_CONTEXT, sizeof(NVContext));
+        *context = contextObj->id;
+
+        NVContext *nvCtx = (NVContext*) contextObj->obj;
+        nvCtx->drv = drv;
+        nvCtx->decoder = NULL;
+        nvCtx->profile = cfg->profile;
+        nvCtx->entrypoint = cfg->entrypoint;
+        nvCtx->width = picture_width;
+        nvCtx->height = picture_height;
+        nvCtx->codec = NULL;
+
+        return VA_STATUS_SUCCESS;
+    }
 
     //find the codec they've selected
     const NVCodec *selectedCodec = NULL;
@@ -927,6 +951,9 @@ static VAStatus nvQuerySurfaceError(
     return VA_STATUS_ERROR_UNIMPLEMENTED;
 }
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+
 static VAStatus nvPutSurface(
         VADriverContextP ctx,
         VASurfaceID surface,
@@ -945,7 +972,15 @@ static VAStatus nvPutSurface(
     )
 {
     LOG("In %s", __func__);
+//    NVDriver *drv = (NVDriver*) ctx->pDriverData;
+//    EGLImage img = eglCreateImage(drv->eglDisplay, EGL_NO_CONTEXT, EGL_NATIVE_PIXMAP_KHR, draw, NULL);
+//    LOG("Got image: %p", img);
+//    if (img != EGL_NO_IMAGE) {
+//        eglDestroyImage(drv->eglDisplay, img);
+//    }
+
     return VA_STATUS_ERROR_UNIMPLEMENTED;
+    //return VA_STATUS_SUCCESS;
 }
 
 static VAStatus nvQueryImageFormats(
@@ -1332,6 +1367,31 @@ static VAStatus nvQuerySurfaceAttributes(
 
     if (attrib_list == NULL) {
             *num_attribs = 5;
+    } else if (cfg->profile == VAProfileNone) {
+        attrib_list[0].type = VASurfaceAttribPixelFormat;
+        attrib_list[0].flags = 0;
+        attrib_list[0].value.type = VAGenericValueTypeInteger;
+        attrib_list[0].value.value.i = VA_FOURCC_NV12;
+
+        attrib_list[1].type = VASurfaceAttribMinWidth;
+        attrib_list[1].flags = 0;
+        attrib_list[1].value.type = VAGenericValueTypeInteger;
+        attrib_list[1].value.value.i = 64;
+
+        attrib_list[2].type = VASurfaceAttribMinHeight;
+        attrib_list[2].flags = 0;
+        attrib_list[2].value.type = VAGenericValueTypeInteger;
+        attrib_list[2].value.value.i = 64;
+
+        attrib_list[3].type = VASurfaceAttribMaxWidth;
+        attrib_list[3].flags = 0;
+        attrib_list[3].value.type = VAGenericValueTypeInteger;
+        attrib_list[3].value.value.i = 8192;
+
+        attrib_list[4].type = VASurfaceAttribMaxHeight;
+        attrib_list[4].flags = 0;
+        attrib_list[4].value.type = VAGenericValueTypeInteger;
+        attrib_list[4].value.value.i = 8192;
     } else {
         CUVIDDECODECAPS videoDecodeCaps = {
             .eCodecType      = cfg->cudaCodec,
@@ -1640,7 +1700,7 @@ VAStatus __vaDriverInit_1_0(VADriverContextP ctx)
     CHECK_CUDA_RESULT(cu->cuCtxCreate(&drv->cudaContext, CU_CTX_SCHED_BLOCKING_SYNC, 0));
 
     ctx->max_profiles = MAX_PROFILES;
-    ctx->max_entrypoints = 1;
+    ctx->max_entrypoints = 2;
     ctx->max_attributes = 1;
     ctx->max_display_attributes = 1;
     ctx->max_image_formats = 3;
