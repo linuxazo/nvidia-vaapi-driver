@@ -1,0 +1,5 @@
+nvidia-vaapi-driver (0.0.5-20220327-1) UNRELEASED; urgency=medium
+
+  * Initial release. Test package for Debian.
+
+ -- Safir Secerovic <sapphire@linux.org.ba>  Sun, 27 Mar 2022 00:21:56 -0600

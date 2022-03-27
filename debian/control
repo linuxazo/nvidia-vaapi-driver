@@ -1,0 +1,46 @@
+Source: nvidia-vaapi-driver
+Priority: optional
+Maintainer: Safir Secerovic <sapphire@linux.org.ba>
+Build-Depends: debhelper-compat (= 13),
+	       libglib2.0-dev,
+	       libunwind-dev,
+	       libdw-dev,
+	       libpcre3-dev,
+	       libffi-dev,
+	       liblzma-dev,
+	       libelf-dev,
+	       zlib1g-dev,
+	       libbz2-dev,
+	       nv-codec-headers,
+	       libgstreamer-plugins-bad1.0-dev,
+	       libegl1-mesa-dev,
+	       libgstreamer1.0-dev,
+	       libglvnd-dev  
+Standards-Version: 4.6.0
+Section: libs
+Homepage: https://github.com/elFarto/nvidia-vaapi-driver
+#Vcs-Browser: https://salsa.debian.org/debian/nvidia-vaapi-driver
+#Vcs-Git: https://salsa.debian.org/debian/nvidia-vaapi-driver.git
+Rules-Requires-Root: no
+
+Package: nvidia-va-driver
+Architecture: any
+Multi-Arch: same
+Depends: ${shlibs:Depends}, 
+	 ${misc:Depends},
+	 libglib2.0-0,
+	 libunwind8,
+	 libdw1,
+	 libpcre3,
+	 libffi8,
+	 liblzma5,
+	 libelf1,
+	 zlib1g,
+	 libbz2-1.0,
+	 libgstreamer1.0-0,
+	 libgstreamer-plugins-bad1.0-0,
+	 libegl1,
+	 libglvnd0	 
+Description: VA-API video acceleration driver for NVIDIA binary drivers
+ This is an VA-API implementation that uses NVDEC as a backend. This implementation is specifically designed 
+ to be used by Firefox for accelerated decode of web content, and may not operate correctly in other applications.
